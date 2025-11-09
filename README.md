@@ -28,7 +28,7 @@ The project revolves around two interactive dashboard pages:
 [View Modeling & BI Export (fraud_pipeline.py)](https://github.com/aymaneben595/Fourth-Project/blob/bd76a24d22c246dc9a47d61312253e47d6659e4a/VSCode%2C%20SQL%20%26%20Python/Python/fraud_pipeline.py)
 
 📊 **Power BI Dashboard:**  
-[⬇️ Download Power BI Report (Fraud Analytics.pbix)]([https://github.com/aymaneben595/Fraud-Analytics-Pipeline/raw/24ebc3b479ec05239e1eadf063bc0a072991e80a/Power%20Bi/Dashboard.pbix](https://drive.google.com/file/d/19ECAgQdn0hrXXN8571ciElD9SkeSM1Za/view))
+[⬇️ Download Power BI Report (Fraud Analytics.pbix)]()
 
 ---
 
