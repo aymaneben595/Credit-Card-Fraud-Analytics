@@ -1,263 +1,238 @@
-#!/usr/bin/env python3
-# ===============================================================
-# 🏆 FRAUD INTELLIGENCE PIPELINE — Power BI + ML Dashboard Ready
-# ===============================================================
-# This Python script automatically prepares all the data needed for
-# a Fraud Analytics Dashboard in Power BI. It:
-#   1️⃣ Connects to the PostgreSQL database
-#   2️⃣ Loads and cleans the transactions data
-#   3️⃣ Builds summary tables for fraud analysis (Page 1)
-#   4️⃣ Trains and evaluates several machine-learning models (Page 2)
-#   5️⃣ Exports all results to CSV files ready for Power BI
-# ===============================================================
+"""Rebuild PaySim aggregates and evaluate three models on a chronological holdout."""
+import argparse
+import csv
+import io
+import logging
+import os
+import shutil
+import zipfile
+from contextlib import contextmanager
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
-# Import all required libraries:
-#  - pandas/numpy → data manipulation
-#  - sqlalchemy → connect to PostgreSQL
-#  - sklearn/xgboost → machine learning
-import os, time, logging
-import pandas as pd, numpy as np
-from sqlalchemy import create_engine, text
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
-from sklearn.linear_model import LogisticRegression
+import numpy as np
+import pandas as pd
+import psycopg2
+from dotenv import load_dotenv
+from filelock import FileLock
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import average_precision_score, confusion_matrix, precision_recall_curve, roc_auc_score
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 from xgboost import XGBClassifier
 
-# ---------------------------------------------------------------
-# ✅ Logging setup
-# ---------------------------------------------------------------
-# Makes the script print helpful progress messages (timestamp + info)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
-)
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parents[1]
+SQL = HERE.parent / "SQL" / "fraud_pipeline.sql"
+TYPES = ["CASH_IN", "CASH_OUT", "DEBIT", "PAYMENT", "TRANSFER"]
+HEADERS = "step type amount nameOrig oldbalanceOrg newbalanceOrig nameDest oldbalanceDest newbalanceDest isFraud isFlaggedFraud".split()
+SEED = 42
+MAX_TRAIN_NEGATIVES = 200_000
 
-# ---------------------------------------------------------------
-# ✅ PostgreSQL connection
-# ---------------------------------------------------------------
-# Read login info from environment variables or use defaults.
-# Adjust these values if your database uses a different user or password.
-DB_USER = os.getenv("PG_USER", "postgres")
-DB_PASS = os.getenv("PG_PASS", "Aymaneb595.")
-DB_HOST = os.getenv("PG_HOST", "localhost")
-DB_PORT = os.getenv("PG_PORT", "5432")
-DB_NAME = os.getenv("PG_DB", "ddb")
-DB_SCHEMA = "fraud"
+@contextmanager
+def source_stream(source):
+    if source.suffix.lower() == ".zip":
+        with zipfile.ZipFile(source) as archive:
+            files = [n for n in archive.namelist() if n.lower().endswith(".csv")]
+            if len(files) != 1:
+                raise ValueError("Supply a ZIP containing exactly one PaySim CSV.")
+            with archive.open(files[0]) as binary, io.TextIOWrapper(binary, encoding="utf-8-sig", newline="") as stream:
+                yield stream
+    else:
+        with source.open(encoding="utf-8-sig", newline="") as stream:
+            yield stream
 
-# Folder where all CSV exports will be saved
-EXPORT_DIR = "exports"
-os.makedirs(EXPORT_DIR, exist_ok=True)
+def load_database(conn, source):
+    with conn.cursor() as cur, source_stream(source) as stream:
+        if next(csv.reader(stream), []) != HEADERS:
+            raise ValueError("Unexpected PaySim CSV header or column order.")
+        cur.execute("""CREATE TEMP TABLE incoming (
+            step integer NOT NULL CHECK (step > 0),
+            type varchar(20) NOT NULL CHECK (type IN ('CASH_IN','CASH_OUT','DEBIT','PAYMENT','TRANSFER')),
+            amount numeric NOT NULL CHECK (amount >= 0 AND amount < 'Infinity'::numeric AND amount=round(amount,2)),
+            nameorig varchar(50), oldbalanceorg numeric, newbalanceorig numeric, namedest varchar(50),
+            oldbalancedest numeric, newbalancedest numeric,
+            isfraud integer NOT NULL CHECK (isfraud IN (0,1)),
+            isflaggedfraud integer NOT NULL CHECK (isflaggedfraud IN (0,1))) ON COMMIT DROP""")
+        cur.copy_expert("COPY incoming FROM STDIN WITH (FORMAT CSV)", stream)
+        cur.execute("SELECT EXISTS(SELECT 1 FROM incoming)")
+        if not cur.fetchone()[0]:
+            raise ValueError("The source contains no transactions.")
+        cur.execute(SQL.read_text(encoding="utf-8"))
 
-# Build the connection string for SQLAlchemy
-DB_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+def prepare(chunk):
+    chunk = chunk.rename(columns=str.lower)
+    if chunk[["step","type","amount","isfraud"]].isna().any().any():
+        raise ValueError("A required transaction value is missing.")
+    steps = pd.to_numeric(chunk.step)
+    labels = pd.to_numeric(chunk.isfraud)
+    amount = pd.to_numeric(chunk.amount).to_numpy(dtype="float64")
+    if not (steps.between(1, 2**31-1) & steps.eq(np.floor(steps))).all() or not labels.isin([0,1]).all():
+        raise ValueError("Invalid simulation step or fraud label.")
+    if not np.isfinite(amount).all() or (amount < 0).any() or (amount > 9e13).any():
+        raise ValueError("Invalid transaction amount.")
+    cents = np.rint(amount * 100)
+    if not np.allclose(cents, amount*100, atol=0.0001, rtol=0):
+        raise ValueError("Transaction amounts must be specified to the cent.")
+    types = pd.Categorical(chunk.type, categories=TYPES).codes
+    if (types < 0).any():
+        raise ValueError("Unexpected PaySim transaction type.")
+    return pd.DataFrame({"step":steps.to_numpy(dtype="int32"), "type":types,
+                         "cents":cents.astype("int64"), "label":labels.to_numpy(dtype="uint8")})
 
-# Function to connect to the database safely (with retries)
-def get_connection():
-    from sqlalchemy.exc import OperationalError
-    for i in range(5):
-        try:
-            engine = create_engine(DB_URL)
-            with engine.connect() as c:
-                c.execute(text(f"SET search_path TO {DB_SCHEMA};"))
-            logging.info("✅ Connected to PostgreSQL")
-            return engine
-        except OperationalError:
-            logging.warning("⏳ Retrying database connection...")
-            time.sleep(2)
-    raise SystemExit("❌ Could not connect to PostgreSQL")
+def transactions(source, conn):
+    parts = []
+    if source is not None:
+        with source_stream(source) as stream:
+            for chunk in pd.read_csv(stream, usecols=["step","type","amount","isFraud"], chunksize=250_000):
+                parts.append(prepare(chunk))
+    else:
+        with conn.cursor(name="paysim_reader") as cur:
+            cur.execute("SELECT step,type,amount::double precision,isfraud FROM fraud.transactions_clean")
+            while batch := cur.fetchmany(100_000):
+                parts.append(prepare(pd.DataFrame(batch, columns=["step","type","amount","isfraud"])))
+    if not parts:
+        raise ValueError("The source contains no transactions.")
+    data = pd.concat(parts, ignore_index=True)
+    if data.empty:
+        raise ValueError("The source contains no transactions.")
+    return data.sort_values(["step","type","cents","label"],ignore_index=True)
 
-# Actually connect now
-engine = get_connection()
+def summarize(data):
+    day = ((data.step - 1) // 24 + 1).rename("simulation_day")
+    flagged = data.cents.where(data.label.eq(1), 0)
+    groups = data.assign(fraud_cents=flagged).groupby([day, "type"], sort=True)
+    activity = groups.agg(transactions=("label","size"), fraud_cases=("label","sum"),
+                          fraud_cents=("fraud_cents","sum")).reset_index()
+    activity["type"] = activity["type"].map(dict(enumerate(TYPES)))
+    return activity
 
-# ---------------------------------------------------------------
-# ✅ Load Clean Data
-# ---------------------------------------------------------------
-# Load the cleaned transactions table from the “fraud” schema
-logging.info("📥 Loading cleaned data from PostgreSQL...")
-df = pd.read_sql(f"SELECT * FROM {DB_SCHEMA}.transactions_clean;", engine)
-df.columns = df.columns.str.lower()   # make column names lowercase for consistency
-logging.info(f"✅ Loaded {len(df):,} rows with {len(df.columns)} columns")
+def chronological_split(data):
+    counts = data.step.value_counts().sort_index()
+    cum = counts.cumsum().to_numpy()
+    ends = [int(counts.index[np.searchsorted(cum, len(data)*fraction)]) for fraction in (0.6,0.8)]
+    train = data.loc[data.step <= ends[0]]
+    valid = data.loc[data.step.between(ends[0]+1, ends[1])]
+    test = data.loc[data.step > ends[1]]
+    if any(x.label.nunique() != 2 for x in (train,valid,test)):
+        raise ValueError("Each chronological partition must contain both classes and cover distinct hours.")
+    return train,valid,test
 
-# ---------------------------------------------------------------
-# ✅ Create Data for Page 1 — Fraud Overview
-# ---------------------------------------------------------------
-# This section produces summary files for Power BI visualizations:
-#   - fraud_by_day.csv
-#   - fraud_by_type.csv
-#   - fraud_by_sender.csv
-#   - fraud_by_receiver.csv
+def features(d):
+    hour = (d.step.to_numpy()-1) % 24
+    angle = hour * (2*np.pi/24)
+    return np.column_stack([np.log1p(d.cents.to_numpy()/100),np.sin(angle),np.cos(angle),
+                            *(d.type.to_numpy()==i for i in range(len(TYPES)))]).astype("float32")
 
-# --- Fraud by Day ---
-# Some datasets use “step” as a time unit (like day number).
-# Here we create a simplified “step_day” just for grouping.
-if "step" in df.columns:
-    df["step_day"] = df["step"] % 7
-
-fraud_by_day = (
-    df.groupby("step_day", as_index=False)
-      .agg(
-          total_transactions=("isfraud", "count"),
-          fraud_cases=("isfraud", "sum"),
-          fraud_rate=("isfraud", "mean"),
-          total_fraud_loss_usd=("amount", lambda x: x[df.loc[x.index, "isfraud"] == 1].sum())
-      )
-)
-fraud_by_day["fraud_rate"] = (fraud_by_day["fraud_rate"] * 100).round(2)
-fraud_by_day.to_csv(f"{EXPORT_DIR}/fraud_by_day.csv", index=False)
-logging.info("💾 Exported fraud_by_day.csv")
-
-# --- Fraud by Transaction Type ---
-# Shows which payment types are riskier (e.g., TRANSFER, CASH_OUT)
-if "type" in df.columns:
-    fraud_by_type = (
-        df.groupby("type", as_index=False)
-          .agg(
-              total_transactions=("isfraud", "count"),
-              fraud_cases=("isfraud", "sum"),
-              fraud_rate=("isfraud", "mean"),
-              total_fraud_loss_usd=("amount", lambda x: x[df.loc[x.index, "isfraud"] == 1].sum())
-          )
-    )
-    fraud_by_type["fraud_rate"] = (fraud_by_type["fraud_rate"] * 100).round(2)
-    fraud_by_type.to_csv(f"{EXPORT_DIR}/fraud_by_type.csv", index=False)
-    logging.info("💾 Exported fraud_by_type.csv")
-
-# --- Fraud by Sender (who caused it) ---
-fraud_by_sender = (
-    df.groupby("nameorig", as_index=False)
-      .agg(
-          total_transactions=("isfraud", "count"),
-          fraud_cases=("isfraud", "sum"),
-          total_amount=("amount", "sum"),
-          total_fraud_loss_usd=("amount", lambda x: x[df.loc[x.index, "isfraud"] == 1].sum())
-      )
-)
-fraud_by_sender["fraud_rate(%)"] = (
-    fraud_by_sender["fraud_cases"] / fraud_by_sender["total_transactions"] * 100
-).round(2)
-fraud_by_sender.to_csv(f"{EXPORT_DIR}/fraud_by_sender.csv", index=False)
-
-# --- Fraud by Receiver (who received it) ---
-fraud_by_receiver = (
-    df.groupby("namedest", as_index=False)
-      .agg(
-          total_transactions=("isfraud", "count"),
-          fraud_cases=("isfraud", "sum"),
-          total_amount=("amount", "sum"),
-          total_fraud_loss_usd=("amount", lambda x: x[df.loc[x.index, "isfraud"] == 1].sum())
-      )
-)
-fraud_by_receiver["fraud_rate(%)"] = (
-    fraud_by_receiver["fraud_cases"] / fraud_by_receiver["total_transactions"] * 100
-).round(2)
-fraud_by_receiver.to_csv(f"{EXPORT_DIR}/fraud_by_receiver.csv", index=False)
-
-logging.info("💾 Exported fraud_by_sender.csv & fraud_by_receiver.csv")
-
-# ---------------------------------------------------------------
-# ✅ MACHINE LEARNING SECTION — Page 2 (Model Performance)
-# ---------------------------------------------------------------
-# This part trains three models to detect fraud:
-#   - Logistic Regression (simple, interpretable)
-#   - Random Forest (tree-based, non-linear)
-#   - XGBoost (advanced, high-performance)
-logging.info("🤖 Training ML models...")
-
-# --- Feature selection ---
-# Columns (variables) used by the models
-features = [
-    "amount", "oldbalanceorg", "newbalanceorig",
-    "oldbalancedest", "newbalancedest",
-    "balance_delta", "balance_change_ratio",
-    "is_cashout", "is_payment", "is_transfer", "is_cashin", "is_merchant"
-]
-
-# Remove rows with missing values in key columns
-df = df.dropna(subset=features + ["isfraud"])
-
-# Split data into training (80%) and testing (20%)
-X, y = df[features], df["isfraud"]
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, stratify=y, test_size=0.2, random_state=42
-)
-
-# --- Feature scaling ---
-# Some models (like Logistic Regression) work better when features are standardized.
-scaler = StandardScaler()
-X_train_s, X_test_s = scaler.fit_transform(X_train), scaler.transform(X_test)
-
-# --- Define and configure the models ---
-models = {
-    "Logistic Regression": LogisticRegression(max_iter=4000, class_weight="balanced"),
-    "Random Forest": RandomForestClassifier(
-        n_estimators=200, max_depth=18, class_weight="balanced", n_jobs=-1
-    ),
-    "XGBoost": XGBClassifier(
-        n_estimators=300, max_depth=7, learning_rate=0.1,
-        scale_pos_weight=10, n_jobs=-1, tree_method="hist", eval_metric="logloss"
-    )
-}
-
-# --- Train and evaluate all models ---
-metrics_list = []
-for name, model in models.items():
-    logging.info(f"🚀 Training {name}...")
-    # Logistic Regression uses scaled data, others use raw
-    model.fit(X_train_s if "Regression" in name else X_train, y_train)
-
-    X_eval = X_test_s if "Regression" in name else X_test
-    preds = model.predict(X_eval)
-    probs = model.predict_proba(X_eval)[:, 1]
-    auc = roc_auc_score(y_test, probs)
-    report = classification_report(y_test, preds, output_dict=True)
-
-    # Collect metrics to compare model performance later
-    metrics = {
-        "model_name": name,
-        "accuracy": report["accuracy"],
-        "precision_fraud": report["1"]["precision"],
-        "recall_fraud": report["1"]["recall"],
-        "f1_fraud": report["1"]["f1-score"],
-        "auc": auc
+def evaluate(data):
+    train, valid, test = chronological_split(data)
+    negatives = train.loc[train.label.eq(0)]
+    sample = pd.concat([train.loc[train.label.eq(1)], negatives.sample(min(len(negatives),MAX_TRAIN_NEGATIVES),
+                        random_state=SEED)]).sample(frac=1,random_state=SEED)
+    x_train, x_valid, x_test = (features(d) for d in (sample,valid,test))
+    models = {
+        "Logistic regression": make_pipeline(StandardScaler(),LogisticRegression(max_iter=600,random_state=SEED)),
+        "Random forest": RandomForestClassifier(n_estimators=100,max_depth=13,min_samples_leaf=12,n_jobs=4,random_state=SEED),
+        "XGBoost": XGBClassifier(n_estimators=160,max_depth=5,learning_rate=0.08,tree_method="hist",
+                                 eval_metric="logloss",n_jobs=4,random_state=SEED),
     }
-    metrics_list.append(metrics)
+    metrics = []
+    for name, model in models.items():
+        logging.info("Fitting %s",name)
+        model.fit(x_train,sample.label)
+        validation_scores = model.predict_proba(x_valid)[:,1]
+        precision,recall,thresholds = precision_recall_curve(valid.label,validation_scores)
+        f1 = 2*precision[:-1]*recall[:-1]/np.maximum(precision[:-1]+recall[:-1],1e-15)
+        best = np.flatnonzero(f1==f1.max())[-1]
+        threshold = float(thresholds[best])
+        probs = model.predict_proba(x_test)[:,1]
+        tn,fp,fn,tp = (int(n) for n in confusion_matrix(test.label,probs>=threshold,labels=[0,1]).ravel())
+        metrics.append(dict(model_name=name,train_end=int(train.step.max()),valid_end=int(valid.step.max()),
+            test_start=int(test.step.min()),test_end=int(test.step.max()),train_rows=len(train),fit_rows=len(sample),
+            valid_rows=len(valid),test_rows=len(test),threshold=threshold,validation_f1=float(f1[best]),
+            tn=tn,fp=fp,fn=fn,tp=tp,accuracy=(tn+tp)/len(test),precision_fraud=tp/(tp+fp) if tp+fp else 0,
+            recall_fraud=tp/(tp+fn),f1_fraud=2*tp/(2*tp+fp+fn),
+            average_precision=average_precision_score(test.label,probs),auc=roc_auc_score(test.label,probs)))
+    result = pd.DataFrame(metrics).sort_values(["validation_f1","model_name"],ascending=[False,True]).reset_index(drop=True)
+    result["validation_rank"] = np.arange(1,len(result)+1)
+    return result
 
-# --- Save model results for Power BI ---
-metrics_df = pd.DataFrame(metrics_list)
-metrics_df.to_csv(f"{EXPORT_DIR}/model_metrics.csv", index=False)
-logging.info("💾 Exported model_metrics.csv")
+def format_amount(table):
+    out = table.copy()
+    # Format from integer cents so CSVs reconcile to two decimals.
+    out["fraud_amount"] = out.pop("fraud_cents").map(lambda n: f"{n//100}.{n%100:02}")
+    return out
 
-# --- Confusion Matrix (for XGBoost only) ---
-# Shows how many frauds were correctly or incorrectly detected.
-best_model = models["XGBoost"]
-preds_best = best_model.predict(X_test)
-cm = confusion_matrix(y_test, preds_best)
-cm_df = pd.DataFrame(cm, columns=["Pred_0", "Pred_1"], index=["Actual_0", "Actual_1"])
-cm_df.to_csv(f"{EXPORT_DIR}/confusion_matrix.csv")
-logging.info("💾 Exported confusion_matrix.csv")
+def publish_reports(tables, output, conn):
+    """Restore the previous exports if replacement or the database commit fails."""
+    output.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(dir=output) as temp:
+        stage = Path(temp)
+        filenames = [name + ".csv" for name in tables]
+        for filename, table in zip(filenames, tables.values()):
+            table.to_csv(stage / filename, index=False, lineterminator="\n")
 
-# --- Save scored dataset ---
-# Adds a “fraud_score_xgb” column with predicted fraud probabilities.
-# Useful for risk ranking and visualization in Power BI.
-df["fraud_score_xgb"] = best_model.predict_proba(X)[:, 1]
-df.to_csv(f"{EXPORT_DIR}/transactions_scored.csv", index=False)
-logging.info("💾 Exported transactions_scored.csv")
+        with FileLock(str(output / ".publish.lock")):
+            previous = stage / "previous"
+            previous.mkdir()
+            replaced = []
+            for filename in filenames:
+                destination = output / filename
+                if destination.exists():
+                    shutil.copyfile(destination, previous / filename)
+            try:
+                for filename in filenames:
+                    (stage / filename).replace(output / filename)
+                    replaced.append(filename)
+                if conn is not None:
+                    conn.commit()
+            except BaseException:
+                for filename in reversed(replaced):
+                    backup = previous / filename
+                    if backup.exists():
+                        backup.replace(output / filename)
+                    else:
+                        (output / filename).unlink()
+                raise
 
-logging.info("✅✅✅ Pipeline completed — All Power BI files ready!")
 
-# ===============================================================
-# 📂 FINAL EXPORTS (for Power BI Dashboard)
-# ---------------------------------------------------------------
-#  Page 1 — Business Insights:
-#     • fraud_by_day.csv
-#     • fraud_by_type.csv
-#     • fraud_by_sender.csv
-#     • fraud_by_receiver.csv
-#
-#  Page 2 — Model Performance:
-#     • transactions_scored.csv
-#     • model_metrics.csv
-#     • confusion_matrix.csv
-# ===============================================================
+def run(source=None, output=HERE/"exports", use_postgres=False):
+    load_dotenv(ROOT/".env")
+    conn = None
+    try:
+        if use_postgres or source is None:
+            conn = psycopg2.connect(dbname=os.environ["PG_DB"],user=os.environ["PG_USER"],password=os.getenv("PG_PASS"),
+                                    host=os.getenv("PG_HOST","localhost"),port=os.getenv("PG_PORT","5432"))
+            with conn.cursor() as cur:
+                cur.execute("SELECT pg_advisory_lock(hashtext('paysim-fraud-analytics'))")
+            if source is not None:
+                load_database(conn,source)
+        data = transactions(source,conn)
+        activity = summarize(data)
+        if conn is not None and source is not None:
+            with conn.cursor() as cur:
+                cur.execute("SELECT simulation_day,type,transactions,fraud_cases,(fraud_amount*100)::bigint FROM fraud.vw_activity ORDER BY 1,2")
+                if cur.fetchall()!=list(activity.sort_values(["simulation_day","type"]).itertuples(index=False,name=None)):
+                    raise ValueError("SQL aggregation disagrees with the source CSV.")
+        metrics = evaluate(data)
+        tables = {"activity": format_amount(activity), "model_metrics":metrics,
+                  "confusion_matrix":metrics[["model_name","tn","fp","fn","tp"]]}
+        for field,name in [("simulation_day","fraud_by_day"),("type","fraud_by_type")]:
+            sums = activity.groupby(field,as_index=False)[["transactions","fraud_cases","fraud_cents"]].sum()
+            sums["fraud_rate"] = sums.fraud_cases/sums.transactions
+            tables[name] = format_amount(sums)
+        publish_reports(tables, Path(output), conn)
+        logging.info("Published %s transactions and %s simulated fraud labels",len(data),int(data.label.sum()))
+    finally:
+        if conn is not None:
+            conn.close()
+
+if __name__ == "__main__":
+    cli = argparse.ArgumentParser(description=__doc__)
+    cli.add_argument("--input",type=Path,help="Original PaySim CSV or single-CSV ZIP. Omit to read PostgreSQL.")
+    cli.add_argument("--postgres",action="store_true",help="Also reload and verify the PostgreSQL schema.")
+    cli.add_argument("--output-dir",type=Path,default=HERE/"exports")
+    args = cli.parse_args()
+    logging.basicConfig(level=logging.INFO,format="%(message)s")
+    run(args.input,args.output_dir,args.postgres)

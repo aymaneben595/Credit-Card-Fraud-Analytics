@@ -1,156 +1,75 @@
-# 💰 Credit Card Fraud Analytics & Machine Learning Pipeline
+# PaySim mobile money fraud analytics
 
----
+Two payment types account for all **8,213 fraud-labelled transactions** in this simulation. Cash-outs have slightly more cases, while a transfer is about **4.2 times** as likely to carry a fraud label. This project uses PostgreSQL, Python and Power BI to explore that difference and measure how three classifiers perform on later transactions.
 
-## 📘 Project Background
+[Download the Power BI report (.pbix)](https://github.com/aymaneben595/Credit-Card-Fraud-Analytics/raw/refs/heads/main/Power%20Bi/PaySim%20Fraud%20Review.pbix) · [Browse the editable report and semantic model](Power%20Bi) · [Original PaySim dataset](https://www.kaggle.com/datasets/ealaxi/paysim1)
 
-This project presents a **realistic end-to-end fraud analytics workflow**, starting from **raw transactional data** and progressing all the way to **machine learning–driven insights** and **Power BI visualization**.  
+## Fraud activity
 
-The goal is to mirror the day-to-day responsibilities of a **Risk & Fraud Automation analyst** — cleaning and transforming raw data in **PostgreSQL**, building predictive models in **Python**, and designing an **executive dashboard in Power BI** that helps detect and prevent fraudulent activity in real time.
+![Fraud activity page showing simulated fraud counts by day, rates by payment type and a full transaction breakdown](Images/fraud-activity.png)
 
-### Key KPIs
-- **Total Transactions:** 6M  
-- **Fraudulent Transactions:** 8K  
-- **Fraud Rate:** 0.13%  
-- **Model Accuracy:** 98.18%  
-- **AUC-ROC:** 1.00  
+| Payment type | Transactions | Fraud-labelled transactions | Fraud rate |
+| --- | ---: | ---: | ---: |
+| Cash-out | 2,237,500 | 4,116 | 0.184% |
+| Transfer | 532,909 | 4,097 | 0.769% |
+| Cash-in, debit and payment combined | 3,592,211 | 0 | 0.000% |
+| **All transactions** | **6,362,620** | **8,213** | **0.129%** |
 
-The project revolves around two interactive dashboard pages:
-1. **Fraud Overview:** Key KPIs, fraud trends, and risky entities  
-2. **Model Performance:** Machine learning results and quality metrics  
+Use the **Payment type** and **Simulation day** filters to compare counts with rates. The labelled transactions sum to **12,056,415,427.84 in simulated local currency**. That figure measures the gross amount on transaction records. PaySim can record a transfer and a subsequent cash-out, and the file has no realized-loss or recovery field.
 
----
+## Model evaluation
 
-🔗 **SQL ETL Script:**  
-[View ETL & Feature Engineering (fraud_pipeline.sql)](https://github.com/aymaneben595/Fourth-Project/blob/bd76a24d22c246dc9a47d61312253e47d6659e4a/VSCode%2C%20SQL%20%26%20Python/SQL/fraud_pipeline.sql)
+![Model evaluation page comparing three classifiers on the same holdout, including false alerts, missed cases, precision and recall](Images/model-evaluation.png)
 
-🐍 **Python Modeling Script:**  
-[View Modeling & BI Export (fraud_pipeline.py)](https://github.com/aymaneben595/Fourth-Project/blob/bd76a24d22c246dc9a47d61312253e47d6659e4a/VSCode%2C%20SQL%20%26%20Python/Python/fraud_pipeline.py)
+The holdout contains **1,248,736 transactions**, including **4,250 fraud labels**. XGBoost had the highest validation F1. On the holdout it raised **2,456 alerts**, of which **1,538** were true positives and **918** were false positives. It missed **2,712** labelled transactions. The random forest raised fewer false alerts (**275**) and caught fewer cases (**936**).
 
-📊 **Power BI Dashboard:**  
-[⬇️ Download Power BI Report (Fraud Analytics.pbix)](https://drive.google.com/file/d/1hoaAPyykCy9kXZNJoRLJTwgRun4skqGh/view)
+| Model | Test precision | Test recall | Test F1 | Test average precision |
+| --- | ---: | ---: | ---: | ---: |
+| XGBoost | 62.62% | 36.19% | 45.87% | 40.27% |
+| Random forest | 77.29% | 22.02% | 34.28% | 37.58% |
+| Logistic regression | 44.38% | 13.29% | 20.46% | 17.44% |
 
----
+Select a model on the second page to inspect its decisions. With all models visible, the cards show the validation F1 leader. These results describe the PaySim simulation. They have not been validated on a live payment network.
 
-## 🚀 Workflow Overview
+### How the evaluation works
 
-The pipeline follows a **three-stage structure**, mirroring what’s used in fintech and risk analytics teams.
+- **Split by complete simulation hours.** Training covers steps 1–281, validation covers 282–355, and testing covers 356–743. The split targets 60%, 20% and 20% of transaction volume while keeping each hour together.
+- **Use information available at decision time.** Features are payment type, log amount and the hour within the 24-hour simulation cycle. The model excludes account IDs, the simulator’s existing flag, and all sender and receiver balance fields. The dataset author documents that the balances reflect how detected fraud is cancelled. [PaySim data description](https://www.kaggle.com/datasets/ealaxi/paysim1)
+- **Choose cutoffs before testing.** Training uses all 3,193 training fraud cases and a reproducible sample of 200,000 legitimate transactions. Validation and test retain every transaction. Each model’s alert cutoff maximizes F1 on validation. A score is used to rank transactions and has not been calibrated as a probability of fraud.
 
-### 1️⃣ SQL: ETL & Feature Engineering  
-- Created a dedicated `fraud` schema in PostgreSQL.  
-- Ingested the Kaggle PaySim dataset into a `raw_transactions` table.  
-- Cleaned and transformed the data, correcting negative balances and data types.  
-- Engineered analytical features:
-  - `balance_delta`, `balance_change_ratio`  
-  - Transaction type flags: `is_cashout`, `is_payment`, `is_transfer`, etc.  
-- Produced multiple summarized views for Power BI (e.g., `vw_fraud_by_day`, `vw_fraud_by_type`, `vw_user_summary`).
+## Corrections to the earlier project
 
-### 2️⃣ Python: Machine Learning & Data Exports  
-- Loaded the cleaned SQL dataset directly from PostgreSQL.  
-- Addressed extreme class imbalance using **class weights** (`scale_pos_weight=10`).  
-- Trained and evaluated three classification models:  
-  - Logistic Regression  
-  - Random Forest  
-  - XGBoost *(selected as the best performer)*  
-- Exported multiple Power BI–ready CSVs, including:
-  - `fraud_by_day.csv`
-  - `fraud_by_type.csv`
-  - `model_metrics.csv`
-  - `transactions_scored.csv`
-
-### 3️⃣ Power BI: Interactive Visualization  
-- Integrated model outputs and SQL summaries into a two-page Power BI report.  
-- Built KPI cards, trend lines, and fraud-risk tables.  
-- Structured for drill-through analysis across fraud types, users, and models.
-
----
-
-## 🧩 Data Pipeline Summary
-
-The dataset, based on the **PaySim credit card transactions simulator**, underwent a full transformation in SQL:
-
-- **Ingestion:** Loaded CSV into `fraud.raw_transactions`.  
-- **Cleaning:** Replaced negative balances with valid values using `GREATEST()`.  
-- **Feature Engineering:** Added transaction-type flags and balance ratio metrics.  
-- **Final Output:** `fraud.transactions_clean` — a rich dataset for modeling and BI.
-
----
-
-## 📈 Executive Summary
-
-From over **6 million transactions**, **8,000** were identified as fraudulent — representing losses exceeding **$12 billion**.  
-
-| Metric | Value |
+| Earlier behavior | Correction |
 | --- | --- |
-| **Total Transactions** | 6,000,000 |
-| **Fraudulent Transactions** | 8,000 |
-| **Fraud Rate** | 0.13% |
-| **Model Accuracy** | 98.18% |
-| **Model Recall (Fraud)** | 93.99% |
-| **ROC-AUC** | 1.00 |
+| Python used `step % 7` to build a daily trend, while SQL treated each hour as a day. | Both now use `1 + (step - 1) // 24` with integer division. The full file spans 31 simulation days. |
+| The README described credit-card activity and dollar losses. | The source simulates mobile money, and monetary values are expressed in its local currency. The report labels the amount represented by fraud records. |
+| The model used balance changes and a random split. Its headline metrics also disagreed with its exported confusion matrix. | The revised benchmark excludes balance features, keeps future hours out of training, and calculates precision and recall directly from each model’s held-out decisions. |
+| The import required a machine-specific path. The merchant indicator treated both customer and merchant prefixes as merchants. | The loader accepts a CSV or ZIP, validates the import, and identifies merchant destinations using the source’s `M` prefix. |
 
-The **XGBoost** model achieved exceptional fraud recall (94%), ensuring high sensitivity for risk detection.
+## Reproduce the results
 
-<p align="center">
-  <img src="Images/last.PNG" alt="Fraud Overview Dashboard" width="800">
-</p>
+Open the PBIX in Power BI Desktop to explore the included aggregates. To edit the report layout or DAX, clone the repository and open `Power Bi/PaySim Fraud Review.pbip` with its adjacent Report and SemanticModel folders.
 
----
+1. Download the original dataset ZIP from the source above. Install the dependencies from the repository root.
 
-## 🔍 Insights Breakdown
+   ```powershell
+   python -m pip install -r requirements.txt
+   ```
 
-### 🧭 Page 1 — Fraud Overview & Risk Insights  
-- **High-Risk Transaction Types:** Fraud occurs exclusively in **TRANSFER** and **CASH_OUT**.  
-- **Top Risky Accounts:** The receiver `C668046170` alone caused nearly **$10M** in losses.  
-- **Fraud Trends:** The rate fluctuates sharply across time steps, suggesting cyclical risk behavior.  
+2. Rebuild the public summaries and model evaluation. Substitute the path to your downloaded ZIP or CSV.
 
-### ⚙️ Page 2 — Model Performance & Quality  
-- **Model Comparison:** All models achieved high accuracy, but recall was the key differentiator.  
-- **XGBoost** outperformed others with:
-  - **Accuracy:** 98.18%  
-  - **Recall (Fraud):** 93.99%  
-  - **Precision (Fraud):** 44.4%  
-  - **ROC-AUC:** 1.00  
-- **Confusion Matrix:**  
-  - TP: 1,550 | FN: 93 | FP: 688 | TN: 1.27M  
+   ```powershell
+   python "VSCode, SQL & Python/Python/fraud_pipeline.py" --input "C:\data\paysim.zip"
+   ```
 
-<p align="center">
-  <img src="Images/last2.PNG" alt="Model Performance Dashboard" width="800">
-</p>
+3. To load PostgreSQL as well, copy `.env.example` to `.env`, set your database connection values, and run the same command with `--postgres`. This replaces the project’s `fraud.raw_transactions` snapshot and reconciles the SQL day-by-type totals with the independent CSV aggregation. An existing populated `fraud.transactions_clean` can be used by running the script without `--input`.
 
----
+4. To update Power BI, set **Transform data → Edit parameters → ExportsFolder** to the absolute path of the pipeline’s `exports` directory, then refresh. A blank parameter uses the included verified snapshot.
 
-## 💡 Business Recommendations
+The public report contains day-by-type totals and model-level decisions. Its embedded data has no transaction-level scores or account identifiers. The full source was checked using PostgreSQL 18. A test with an invalid fraud label preserved the previous successful database and export. The published run used pandas 2.3.3, scikit-learn 1.7.2 and XGBoost 3.4.1.
 
-1. **Deploy the XGBoost Model in Production**  
-   Its 94% recall ensures minimal undetected fraud cases.
+[Python pipeline](VSCode%2C%20SQL%20%26%20Python/Python/fraud_pipeline.py) · [PostgreSQL transformations](VSCode%2C%20SQL%20%26%20Python/SQL/fraud_pipeline.sql) · [Aggregate exports](VSCode%2C%20SQL%20%26%20Python/Python/exports)
 
-2. **Apply Stricter Controls on TRANSFER & CASH_OUT**  
-   These two transaction types account for 100% of detected fraud.
+PaySim was created by Edgar A. López-Rojas and collaborators. The published activity summaries are derived from the original synthetic financial dataset. [Dataset and license](https://www.kaggle.com/datasets/ealaxi/paysim1)
 
-3. **Investigate High-Risk Accounts**  
-   Start with top receivers and frequent senders with abnormal activity.
-
-4. **Optimize Precision vs. Recall**  
-   Review trade-offs between blocking legitimate transactions vs. catching all fraud.
-
----
-
-## ⚙️ Assumptions & Notes
-
-- Dataset sourced from the **PaySim credit card simulator**.  
-- `step` column represents transaction time in hours.  
-- Fraud rate appears higher in subset metrics due to grouping by specific dimensions.  
-- Models trained using **class weighting** to handle the 0.13% imbalance.  
-
----
-
-<p align="center">
-  <i>Created by Aïmane Benkhadda — End-to-End Fraud Analytics Project (PostgreSQL · Python · Power BI)</i><br>
-  <a href="mailto:aymanebenkhadda5959@gmail.com">aymanebenkhadda5959@gmail.com</a>
-</p>
-
----
-
-✅ **In short:**  
-This project combines **SQL-based ETL**, **Python-based modeling**, and **Power BI visualization** into one complete analytical solution — the same kind of workflow a fraud analyst or data scientist would build at a real fintech company.
+Aïmane Benkhadda

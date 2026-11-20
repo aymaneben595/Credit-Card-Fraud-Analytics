@@ -1,0 +1,9 @@
+.env
+**/__pycache__/
+**/.pbi/cache.abf
+**/.pbi/localSettings.json
+**/.pbi/unappliedChanges.json
+**/exports/fraud_by_sender.csv
+**/exports/fraud_by_receiver.csv
+**/exports/transactions_scored.csv
+**/.publish.lock

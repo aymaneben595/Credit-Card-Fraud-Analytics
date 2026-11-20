@@ -1,0 +1,68 @@
+table Activity
+	lineageTag: d072a0e9-f6e5-5d34-a9e4-5746eacc9213
+
+	measure Transactions = SUM(Activity[Volume])
+		formatString: #,0
+		lineageTag: 6d5372c0-1dd1-5d52-a899-067f08a6f1ce
+
+	measure 'Fraud cases' = SUM(Activity[Label count])
+		formatString: #,0
+		lineageTag: 61f1f0ce-ecf9-5f82-ab2f-d052a324d019
+
+	measure 'Fraud rate' = DIVIDE([Fraud cases], [Transactions])
+		formatString: 0.000%
+		lineageTag: 19a12526-afad-5112-98f5-4f777a84fdb3
+
+	measure 'Fraud amount (bn)' = DIVIDE(SUM(Activity[Labelled amount]), 1000000000)
+		formatString: 0.00
+		lineageTag: 813eb546-f237-510c-8db1-1b01d9d5615e
+
+	measure 'Volume share' = DIVIDE([Transactions], CALCULATE([Transactions], ALLSELECTED(Activity[Payment type])))
+		formatString: 0.0%
+		lineageTag: 9277d13e-a15b-57c1-8ac5-f640ec852a85
+
+	column 'Simulation day'
+		dataType: int64
+		lineageTag: 8d8873a9-12f0-59d6-8d47-e72624ec7203
+		summarizeBy: none
+		sourceColumn: simulation_day
+
+	column 'Payment type'
+		dataType: string
+		lineageTag: c8f53f9a-6bd9-5aa1-9e24-b0b9ffabbef3
+		summarizeBy: none
+		sourceColumn: type
+
+	column Volume
+		dataType: int64
+		isHidden
+		lineageTag: 7b331b88-ee7b-5d95-badf-96573dd2219b
+		summarizeBy: none
+		sourceColumn: transactions
+
+	column 'Label count'
+		dataType: int64
+		isHidden
+		lineageTag: 618c1dfa-b0c4-5281-a3d8-24fe3cce75a5
+		summarizeBy: none
+		sourceColumn: fraud_cases
+
+	column 'Labelled amount'
+		dataType: decimal
+		isHidden
+		lineageTag: aeb48f1b-7694-5d8c-8775-e0dce69b3080
+		summarizeBy: none
+		sourceColumn: fraud_amount
+
+	partition Activity = m
+		mode: import
+		source =
+				let
+				    Source = if ExportsFolder = null or Text.Trim(ExportsFolder) = "" then Binary.Decompress(Binary.FromText("H4sIAAAAAAAC/21Xy47cRgy8z7cIjeaz2UcncRAf4gTO5pCTsbAdwEBsB971wX8fUiM1uZm97EMiqRK7WCw9fPz07Z/7x49fPr99f/99e/z+74ft8ev954f7d3HxYfv76/2392/f3T98OP++//Tl2+fHC2w/vvjjl7evXm+A3FG3vvXW+3n9tz/vNuxMc2zAsEGXLojG15CfXv7w6m5jHj3Tfn/x168vX99tMFlHKXf35sXrP35++WZjVdMNqHs1BQBhaqwXXEDmHH2ciZg4QFm7bCCebVMYEbApecgVBwr0TFs4pAOXcgsHGer02xTVdA4e2JgvlA2hlUalG+zAxWHMgcJMvVHcPyBwZpwA2HpeXE/3Z96W4fVsNrYzi/PhioKOCzaECUjcrXXwgOvT/f/MWe/PaJqXFwDvFt+Wknx7llVNyiGMaJrzBBB5drTZunrAFYEfeuacCKTwQxLA7HpbSAsLvDNnmhYAMmV6VqA3UtAxoWGEHEegSplWuuDkyevJAqWo9P9qI3HQIDkTR8UBROYdVB+Q7nzsyo0j5GQjzUxbOJx12ddRcDj94Laa1X4ku+xJP0gdR9ByKA4jtOiknTi8WKZlP+bI6bSCY+gIXnjFIcNnzaxNucyFw/xxcCbOgoOHimeiBbd9PJl7G+ohB464s9ISBw8r5RIHeQ2vNnYhATW4ak5PIGIpE+f1HQlNAIojdyQqcxhDgz3mnFKgkphnU3vlNxIMDhjXFpuLEJqMhuMCKZ7+xL6OG6C2xfp+sD5ofYrodDBEEXOA6VwTC2FlYrlRmNLNjsl1pswZ+gkXSAEdzLKoAlVB0dWQ4/A9lwaSP6PNGTHnIc2auMAgDbNyI1XE+aZHwUBsttMWUkWnWMoS0JMB8ujAFNzoQ5ClIUTMOcllHVHpDJRRBqqzPAY9UzBl1QbOfA+unDHdtYhiBifJBG1TI+Yco6QpFHUlgUHlRiGw+aNuC0qZJKV8waqx3H34PDfWA8csdWm05x5C73wsiQmGOTUCpIKJab8tmHLrsjSzZtVbAgm+RXe8v56sYz9izWnikpicCRqWGwnG954+U7BqLhcePhFdBPWx9vMn/wHmotKEIuY8pmElsXBGoVZMMKJg14I+n9AJoSleIIXXpThfw+ou7jHXHDz1hvrGbrJHHKswty6k7g5NNwBW7YCOazFz7opTt5kLTMoujqIvRXYJw0i5tPpvUvZXaJMj4opCtSQtR0Idy+XcyJNuS2EqLlOWwyK46g7CV2iIkpF32lcXSUQcnSArWasTPQcKi9bClOeKpdSK0jpJLEo7ZG+hXheG+8vZCCLiQAFYsk4UNnJLI1R3xPBMMSxuufdFC3ziUgfhtY3dV+AMQvURIVccbp9LWrplKu0oAssjrPdNteJSfZqyYtVXhQDSvZPd/S276z5CDtuehMKiru6KoVwvtl3smWpctg6kza7S2uM7YF+ebhBk99mEEXJ6Ri1pC4eDx3I9B7bPw+3o7K5rOht7tWJcqeeuwiqrs+8GJfw7TXT7IE1HhBwNSQHEIqrTRr2+gIiL1FGNcUx3js3mBVNSw06sxKKojLvzDm6pf3d4VxpoRJxE7SVrmeie9gmLmPpX21lsIk1Db4d/EqWWuqqt/YRFStGna++jOwHf2zSgCUbEsWJ6STpB4KBaa4Ewux4JOgL/kPJNpx6QEkqSXhOtdgKjheG93f0KT/8Ck4i4Ypg1aTUCU46xKijvfpHjmFVUiNr0iZ1lYtWSUdW5+uHJ/kHq1nz6K9oIh4anhrrhK2k5KFyaMZ/wwm6rUcqoL8zFCyoy6jvk2AGsE8Q7EoaBloyilKwTBpWXoiqjfScZB4puvnVGE7lQdaZBmvje8MI83OqHz6eigSuARMjcrQW//wP60oPUahAAAA==", BinaryEncoding.Base64), Compression.GZip) else File.Contents(ExportsFolder & "/activity.csv"),
+				    Headers = Table.PromoteHeaders(Csv.Document(Source, [Delimiter=",", Encoding=65001, QuoteStyle=QuoteStyle.Csv]), [PromoteAllScalars=true]),
+				    Selected = Table.SelectColumns(Headers, {"simulation_day", "type", "transactions", "fraud_cases", "fraud_amount"}),
+				    Typed = Table.TransformColumnTypes(Selected, {{"simulation_day", Int64.Type}, {"type", type text}, {"transactions", Int64.Type}, {"fraud_cases", Int64.Type}, {"fraud_amount", Currency.Type}}, "en-US")
+				in
+				    Typed
+
+	annotation PBI_ResultType = Table

@@ -1,0 +1,153 @@
+table Models
+	lineageTag: f87ab2f8-0f8f-567c-9084-3ba971055239
+
+	measure 'Model in focus' = MAXX(TOPN(1, 'Models', 'Models'[Rank], ASC), 'Models'[Model])
+		lineageTag: f5f58ac1-362d-58e7-8d4a-b5b6bb02d214
+
+	measure 'True alerts' = MAXX(TOPN(1, 'Models', 'Models'[Rank], ASC), 'Models'[TP count])
+		formatString: #,0
+		lineageTag: f1a03fdf-e041-564d-b4c5-219075949044
+
+	measure 'False alerts' = MAXX(TOPN(1, 'Models', 'Models'[Rank], ASC), 'Models'[FP count])
+		formatString: #,0
+		lineageTag: 76edce6e-6eef-5c08-81ac-0336a3971eca
+
+	measure 'Missed cases' = MAXX(TOPN(1, 'Models', 'Models'[Rank], ASC), 'Models'[FN count])
+		formatString: #,0
+		lineageTag: 4e34771a-0fc4-5d85-8ada-3336164e51fc
+
+	measure 'Correct clears' = MAXX(TOPN(1, 'Models', 'Models'[Rank], ASC), 'Models'[TN count])
+		formatString: #,0
+		lineageTag: c7ea5598-ce3b-51fd-b726-25fc7ab00716
+
+	measure 'Avg precision' = MAXX(TOPN(1, 'Models', 'Models'[Rank], ASC), 'Models'[AP value])
+		formatString: 0.00%
+		lineageTag: 37bc916c-8a82-5e42-ba9c-230795aa7c01
+
+	measure 'ROC AUC' = MAXX(TOPN(1, 'Models', 'Models'[Rank], ASC), 'Models'[AUC value])
+		formatString: 0.0000
+		lineageTag: ca2d9bcd-997a-582f-bcac-0903fd1440d0
+
+	measure 'Validation F1' = MAXX(TOPN(1, 'Models', 'Models'[Rank], ASC), 'Models'[Validation F1 value])
+		formatString: 0.00%
+		lineageTag: 4197503e-d5dc-5d31-9bf3-0ed5169aa013
+
+	measure 'Cutoff score' = MAXX(TOPN(1, 'Models', 'Models'[Rank], ASC), 'Models'[Threshold value])
+		formatString: 0.0000
+		lineageTag: 481cad2a-2ab8-5c6d-ac77-31caf7aadf2d
+
+	measure Precision = DIVIDE([True alerts],[True alerts]+[False alerts],0)
+		formatString: 0.00%
+		lineageTag: abb245a2-2d6a-59f4-8d8d-de64c433ca90
+
+	measure Recall = DIVIDE([True alerts],[True alerts]+[Missed cases])
+		formatString: 0.00%
+		lineageTag: bc1501a3-8388-54a4-bddf-7e961a172f24
+
+	measure 'F1 score' = DIVIDE(2*[True alerts],2*[True alerts]+[False alerts]+[Missed cases])
+		formatString: 0.00%
+		lineageTag: ea462488-205e-5dcd-b189-cacc3f80673b
+
+	measure 'Test transactions' = [True alerts]+[False alerts]+[Missed cases]+[Correct clears]
+		formatString: #,0
+		lineageTag: b5400998-c450-56b4-a5af-8389bbb163da
+
+	measure 'Test fraud rate' = DIVIDE([True alerts]+[Missed cases],[Test transactions])
+		formatString: 0.000%
+		lineageTag: 3f51b717-1977-5778-a7c6-abe6c39a3041
+
+	column Model
+		dataType: string
+		lineageTag: efaf3670-430a-596c-a668-7fefa03d591d
+		summarizeBy: none
+		sourceColumn: model_name
+
+	column Rank
+		dataType: int64
+		isHidden
+		lineageTag: da183058-fd16-542c-9642-ef880eb17bfd
+		summarizeBy: none
+		sourceColumn: validation_rank
+
+	column 'TP count'
+		dataType: int64
+		isHidden
+		lineageTag: b0e627cf-f419-5616-b4f6-0380ee687cff
+		summarizeBy: none
+		sourceColumn: tp
+
+	column 'FP count'
+		dataType: int64
+		isHidden
+		lineageTag: 03fe6e09-460f-5a9c-b89e-fb560318bca1
+		summarizeBy: none
+		sourceColumn: fp
+
+	column 'FN count'
+		dataType: int64
+		isHidden
+		lineageTag: 4d85c3e0-2368-5fe7-a2fe-47de32189a9b
+		summarizeBy: none
+		sourceColumn: fn
+
+	column 'TN count'
+		dataType: int64
+		isHidden
+		lineageTag: 3362168e-be7c-5b2f-ab0d-62c5b06d387e
+		summarizeBy: none
+		sourceColumn: tn
+
+	column 'AP value'
+		dataType: double
+		isHidden
+		lineageTag: 1fb2d4da-29b7-55a4-abec-f37e9b54be38
+		summarizeBy: none
+		sourceColumn: average_precision
+
+	column 'AUC value'
+		dataType: double
+		isHidden
+		lineageTag: 64f2bd0d-9484-5cdb-992d-abcdc83788d6
+		summarizeBy: none
+		sourceColumn: auc
+
+	column 'Validation F1 value'
+		dataType: double
+		isHidden
+		lineageTag: 2acc531e-edf7-5100-bb82-5b3e11b8d34a
+		summarizeBy: none
+		sourceColumn: validation_f1
+
+	column 'Threshold value'
+		dataType: double
+		isHidden
+		lineageTag: 4243873b-9dbc-5b92-acd6-f1d650727a03
+		summarizeBy: none
+		sourceColumn: threshold
+
+	column 'Test start'
+		dataType: int64
+		isHidden
+		lineageTag: 3b4d05b1-57f6-5bdd-ba1f-630fde276a8e
+		summarizeBy: none
+		sourceColumn: test_start
+
+	column 'Test end'
+		dataType: int64
+		isHidden
+		lineageTag: 175c567a-67a1-567e-8773-cd7c6b9b7f63
+		summarizeBy: none
+		sourceColumn: test_end
+
+	partition Models = m
+		mode: import
+		source =
+				let
+				    Source = if ExportsFolder = null or Text.Trim(ExportsFolder) = "" then Binary.Decompress(Binary.FromText("H4sIAAAAAAAC/51Su24bQQzs9RX+gIXB95JtmjSpUqUTFtLJESLfGXdnB/n7cFeGkzYpBHGp4ZAzo+flPN2Oc3ueyr6263yc5nN5a7freVT7tO3HbW/rfi9Hb+DW5edWLtf9XtwnRjlw9+r7Om3fl9s7Yduvy3y8YNnncnkpl7nsL6WdTq9rO/0qL+t0um4DsbbXc8lnu93eHxd8L9rbtLan6fiBLu319Df92uYfh2+fPy3LthdyLKyaHytVuLATaEQhYAwuSMHkmt/ila3Ao1mYgYIbk3UkPIrkTy6EoGSM1tHJ5yXQC1WkgsqewIgKwdDHqTpopyMjQgnniswq2WJDd2KlEMRqHSXqFlwhuWqIYm8BmRtUMYJArrXzK+ZLTcBqv7Dg4Wubz8vzw2VJn/9DrecVikos4hy1Lya1yiShijjM6PAUjyk1mRmlxJhNtUjq/e4ujrJVK0WKlfROecgggj9SpUIfZOkq2QCgb7LRq+pIDKBVE4lDLYgKM5slm2ihw5fl6brt19PDOj2l4JH+P2tOEyEkMry8zUYkEBmvYpgrcAoaCdfqpYKXzF6LjpwiTHJKyAQTPnISdmaxnM8sA3pOacaHYO1ZdyNSTHjudcn1jn0tVhHwCCBwiPyj9BWYp3BamEYaRa4//Aav/xdSoQMAAA==", BinaryEncoding.Base64), Compression.GZip) else File.Contents(ExportsFolder & "/model_metrics.csv"),
+				    Headers = Table.PromoteHeaders(Csv.Document(Source, [Delimiter=",", Encoding=65001, QuoteStyle=QuoteStyle.Csv]), [PromoteAllScalars=true]),
+				    Selected = Table.SelectColumns(Headers, {"model_name", "validation_rank", "tp", "fp", "fn", "tn", "average_precision", "auc", "validation_f1", "threshold", "test_start", "test_end"}),
+				    Typed = Table.TransformColumnTypes(Selected, {{"model_name", type text}, {"validation_rank", Int64.Type}, {"tp", Int64.Type}, {"fp", Int64.Type}, {"fn", Int64.Type}, {"tn", Int64.Type}, {"average_precision", type number}, {"auc", type number}, {"validation_f1", type number}, {"threshold", type number}, {"test_start", Int64.Type}, {"test_end", Int64.Type}}, "en-US")
+				in
+				    Typed
+
+	annotation PBI_ResultType = Table

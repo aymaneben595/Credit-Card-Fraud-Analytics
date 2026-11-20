@@ -1,0 +1,36 @@
+{
+  "name": "SignalReview",
+  "dataColors": [
+    "#334E91",
+    "#BB583A",
+    "#18ABAA",
+    "#699387",
+    "#6F7989",
+    "#8A755B",
+    "#96A892"
+  ],
+  "foreground": "#172641",
+  "background": "#FFFFFF",
+  "tableAccent": "#334E91",
+  "good": "#327D6E",
+  "bad": "#AE443F",
+  "neutral": "#BB583A",
+  "textClasses": {
+    "title": {
+      "fontFace": "Segoe UI",
+      "color": "#172641"
+    },
+    "header": {
+      "fontFace": "Segoe UI",
+      "color": "#172641"
+    },
+    "label": {
+      "fontFace": "Segoe UI",
+      "color": "#172641"
+    },
+    "callout": {
+      "fontFace": "Segoe UI",
+      "color": "#172641"
+    }
+  }
+}

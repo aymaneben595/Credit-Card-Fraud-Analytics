@@ -1,0 +1,5 @@
+/// Optional path to the pipeline exports directory. A blank value uses the included summaries.
+expression ExportsFolder = "" meta [IsParameterQuery=true, Type="Text", IsParameterQueryRequired=false]
+	lineageTag: fe7f2ebd-c206-5480-8954-aea3c9d5ac98
+
+	annotation PBI_ResultType = Text

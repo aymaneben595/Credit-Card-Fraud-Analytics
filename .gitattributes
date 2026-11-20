@@ -1,3 +1,5 @@
-*.csv filter=lfs diff=lfs merge=lfs -text
-*.pbix filter=lfs diff=lfs merge=lfs -text
-Power[[:space:]]Bi/Dashboard.pbix filter=lfs diff=lfs merge=lfs -text
+* text=auto
+*.png binary
+*.PNG binary
+*.pbix binary
+*.csv text eol=lf

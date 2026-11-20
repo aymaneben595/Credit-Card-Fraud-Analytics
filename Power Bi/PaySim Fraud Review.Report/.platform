@@ -1,0 +1,11 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "Report",
+    "displayName": "PaySim Fraud Review"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "1fc7aa8b-3a53-58b3-a568-03e2b24216ab"
+  }
+}
